@@ -1,0 +1,40 @@
+{
+  "Comment": "GMaps enrichment workflow (placeholder ARNs)",
+  "StartAt": "MapEnrichment",
+  "States": {
+    "MapEnrichment": {
+      "Type": "Map",
+      "ItemsPath": "$.ids",
+      "MaxConcurrency": 5,
+      "ItemSelector": {
+        "id.$": "$$.Map.Item.Value"
+      },
+      "Iterator": {
+        "StartAt": "Enrich",
+        "States": {
+          "Enrich": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "ENRICH_LAMBDA_ARN",
+              "Payload.$": "$"
+            },
+            "OutputPath": "$.Payload",
+            "Next": "Update"
+          },
+          "Update": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "UPDATE_LAMBDA_ARN",
+              "Payload.$": "$"
+            },
+            "OutputPath": "$.Payload",
+            "End": true
+          }
+        }
+      },
+      "End": true
+    }
+  }
+}
