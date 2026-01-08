@@ -5,6 +5,8 @@ import io
 import json
 import logging
 import os
+from datetime import datetime, timezone
+import uuid
 from urllib.parse import unquote_plus
 
 import boto3
@@ -80,6 +82,10 @@ def build_messages(rows, source_bucket, source_key):
         List of message payloads.
     """
     messages = []
+    batch_id = uuid.uuid4().hex[:8]
+    batch_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    csv_name = f"{batch_timestamp}_{batch_id}.csv"
+    total_rows = len(rows)
     for idx, row in enumerate(rows):
         payload = {
             "id": str(row.get("id", "")).strip(),
@@ -87,6 +93,10 @@ def build_messages(rows, source_bucket, source_key):
             "country": (row.get("country") or "").strip(),
             "source_bucket": source_bucket,
             "source_key": source_key,
+            "csv_name": csv_name,
+            "batch_id": batch_id,
+            "batch_timestamp": batch_timestamp,
+            "total_rows": total_rows,
             "row_number": idx + 1,
         }
         messages.append(payload)

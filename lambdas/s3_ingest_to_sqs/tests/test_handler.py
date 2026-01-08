@@ -28,6 +28,7 @@ def test_build_messages_trims_fields():
     assert messages[0]["search_term"] == "Cafe"
     assert messages[0]["id"] == "123"
     assert messages[0]["country"] == "IE"
+    assert messages[0]["total_rows"] == 1
 
 
 def test_send_sqs_batches_groups_payloads():

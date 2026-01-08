@@ -11,9 +11,8 @@ This workspace contains Lambda modules for a Google Maps SERP + Bright Data enri
 ## Lambda modules
 
 - `lambdas/s3_ingest_to_sqs`: S3 CSV ingest -> SQS.
-- `lambdas/serp_fetcher`: SQS -> Google Maps SERP -> DynamoDB.
-- `lambdas/enrich_to_s3`: DynamoDB -> Bright Data enrichment -> S3 Parquet.
-- `lambdas/enrichment_to_dynamo`: S3 Parquet -> DynamoDB update.
+- `lambdas/serp_fetcher`: SQS -> Google Maps SERP parsing -> S3 (per-query JSON + enrichment request).
+- `lambdas/enrich_to_s3`: Bright Data notification handler -> merge with SERP JSON -> final JSON in S3.
 
 Each Lambda is packaged as a container image (dependencies bundled in the image).
 
@@ -35,35 +34,33 @@ The ingest Lambda expects a CSV with columns:
 
 `serp_fetcher`:
 
-- `DDB_TABLE` (required)
+- `RESULTS_BUCKET` (required)
+- `PERSIST_PREFIX` (optional, default `persistence`)
+- `MAX_MESSAGES` (optional, cap SQS records per invocation)
+- `MAX_RESULTS` (optional, default 5)
 - `SERP_BASE_URL` (optional, default `https://www.google.com/maps/search/`)
 - `SERP_PARAMS_JSON` (optional JSON string, merged into request params)
 - `REQUEST_TIMEOUT` (optional)
 - `VERIFY_TLS` (optional, `true`/`false`)
 - `USER_AGENT` (optional)
 - `BRIGHTDATA_USERNAME`, `BRIGHTDATA_PASSWORD`, `BRIGHTDATA_PORT`, `BRIGHTDATA_HOST` (optional proxy)
+- `BRIGHTDATA_DATASET_ID` (required for enrichment trigger)
+- `BRIGHTDATA_TOKEN` (required for enrichment trigger)
+- `BRIGHTDATA_S3_BUCKET` (required for Bright Data S3 delivery)
+- `BRIGHTDATA_ROLE_ARN` (required for Bright Data S3 delivery)
+- `BRIGHTDATA_EXTERNAL_ID` (required for Bright Data S3 delivery)
+- Bright Data S3 directory is fixed: `bd-results/date=YYYY-MM-DD/csv_name=<csv>`
+- `BRIGHTDATA_TRIGGER_TIMEOUT` (optional)
 
 `enrich_to_s3`:
 
-- `DDB_TABLE` (required)
-- `ENRICHMENT_BUCKET` (required)
-- `ENRICHMENT_PREFIX` (optional)
-- `MAX_URLS` (optional)
-- `BRIGHTDATA_MODE` (`dataset` or `direct`)
-- `BRIGHTDATA_TOKEN` (required)
-- `BRIGHTDATA_DATASET_ID` (required for `dataset` mode)
-- `BRIGHTDATA_ZONE` (required for `direct` mode)
-- `BRIGHTDATA_TRIGGER_URL` (optional)
-- `BRIGHTDATA_REQUEST_URL` (optional)
+- `FINAL_PREFIX` (optional, default `final`)
 
-`enrichment_to_dynamo`:
+The notification event must include:
 
-- `DDB_TABLE` (required)
-
-## DynamoDB table
-
-The handlers assume a table with a partition key named `id` (String). Add a sort key if your model needs it, but update the handlers accordingly.
-
+- `enrichment_bucket`, `enrichment_key`
+- `serp_bucket`, `serp_key`
+- `final_bucket` (optional if it matches the enrichment bucket)
 ## Local testing
 
 From `GMaps/`:
@@ -85,9 +82,4 @@ docker build -t s3-ingest .
 
 ## Step Functions (high level)
 
-Use a `Map` state to iterate over IDs and run enrichment + Dynamo update:
-
-1. `enrich_to_s3` (returns `s3_bucket` + `s3_key`)
-2. `enrichment_to_dynamo` (updates Dynamo)
-
-See `infra/step_functions.asl.json` for a starter definition.
+Use a `Map` state to iterate over IDs and run enrichment + merge once the notification flow is defined.
