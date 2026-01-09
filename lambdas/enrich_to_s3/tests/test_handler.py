@@ -7,6 +7,12 @@ def test_build_final_key_contains_csv_name():
     assert key == "final/sample.csv_enriched_results.json"
 
 
+def test_parse_query_id_from_key():
+    key = "wsapi/dataset/2026-01-01T00-00-00Z/csv_name=sample.csv/query=abc123/results.json"
+
+    assert handler.parse_query_id_from_key(key) == "abc123"
+
+
 def test_merge_place_prefers_enrichment():
     serp_place = {
         "title": "Cafe",

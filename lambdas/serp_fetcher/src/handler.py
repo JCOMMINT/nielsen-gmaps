@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 import boto3
+from botocore.exceptions import ClientError
 import requests
 
 logger = logging.getLogger()
@@ -342,6 +343,18 @@ def write_json_to_s3(s3_client, bucket, key, payload):
     s3_client.put_object(Bucket=bucket, Key=key, Body=body.encode("utf-8"))
 
 
+def write_json_if_missing(s3_client, bucket, key, payload):
+    """Write JSON content to S3 only if the key does not exist."""
+    body = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    try:
+        s3_client.put_object(Bucket=bucket, Key=key, Body=body, IfNoneMatch="*")
+        return True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "PreconditionFailed":
+            return False
+        raise
+
+
 def build_query_key(prefix, run_date, csv_name, query_id, suffix):
     """Build a persistence key for a query output.
 
@@ -355,15 +368,30 @@ def build_query_key(prefix, run_date, csv_name, query_id, suffix):
     Returns:
         S3 key for persistence output.
     """
-    base = os.path.splitext(os.path.basename(csv_name))[0]
     return (
         f"{prefix}/date={run_date}/csv_name={csv_name}/"
-        f"query={query_id}_{suffix}_{base}.json"
+        f"query={query_id}_{suffix}.json"
     )
 
 
-def build_manifest_key(prefix, run_date, csv_name):
-    """Build the manifest key for a CSV.
+def build_query_serp_key(prefix, run_date, csv_name, query_id):
+    """Build the SERP key for a single query."""
+    return (
+        f"{prefix}/date={run_date}/csv_name={csv_name}/serp/"
+        f"query={query_id}.json"
+    )
+
+
+def build_query_enriched_key(prefix, run_date, csv_name, query_id):
+    """Build the enriched key for a single query."""
+    return (
+        f"{prefix}/date={run_date}/csv_name={csv_name}/enriched/"
+        f"query={query_id}.json"
+    )
+
+
+def build_batch_manifest_key(prefix, run_date, csv_name):
+    """Build the batch manifest key for a CSV.
 
     Args:
         prefix: Prefix for persistence output.
@@ -371,17 +399,17 @@ def build_manifest_key(prefix, run_date, csv_name):
         csv_name: CSV filename.
 
     Returns:
-        S3 key for the manifest.
+        S3 key for the batch manifest.
     """
     base = os.path.splitext(os.path.basename(csv_name))[0]
-    return f"{prefix}/date={run_date}/csv_name={csv_name}/serp_manifest_{base}.json"
+    return f"{prefix}/date={run_date}/csv_name={csv_name}/batch_{base}.json"
 
 
-def build_enrichment_directory(run_date, csv_name):
+def build_enrichment_directory(run_date, csv_name, query_id):
     """Build the fixed enrichment output directory for Bright Data."""
     dataset_id = os.getenv("BRIGHTDATA_DATASET_ID") or "dataset"
     run_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
-    return f"wsapi/{dataset_id}/{run_ts}/csv_name={csv_name}"
+    return f"wsapi/{dataset_id}/{run_ts}/csv_name={csv_name}/query={query_id}"
 
 
 def lambda_handler(event, context):
@@ -416,7 +444,19 @@ def lambda_handler(event, context):
         persist_prefix = os.getenv("PERSIST_PREFIX", "persistence")
 
         for csv_name, csv_messages in grouped.items():
-            records = []
+            run_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            manifest_key = build_batch_manifest_key(persist_prefix, run_date, csv_name)
+            manifest_payload = {
+                "csv_name": csv_name,
+                "total_rows": csv_messages[0].get("total_rows"),
+                "max_results": max_results,
+                "expected_places": (csv_messages[0].get("total_rows") or 0) * max_results,
+                "batch_id": csv_messages[0].get("batch_id"),
+                "batch_timestamp": csv_messages[0].get("batch_timestamp"),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            write_json_if_missing(s3_client, results_bucket, manifest_key, manifest_payload)
+
             for message in csv_messages:
                 search_id = message.get("id") or str(uuid.uuid4())
                 search_term = message.get("search_term", "")
@@ -442,62 +482,58 @@ def lambda_handler(event, context):
                     places.append(place)
 
                 record = {
+                    "csv_name": csv_name,
                     "id": search_id,
                     "search_term": search_term,
                     "country": message.get("country"),
                     "source_key": message.get("source_key"),
+                    "row_number": message.get("row_number"),
+                    "total_rows": message.get("total_rows"),
                     "results": places,
                 }
-                records.append(record)
 
-            run_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                serp_key = build_query_serp_key(persist_prefix, run_date, csv_name, search_id)
+                write_json_to_s3(s3_client, results_bucket, serp_key, record)
 
-            manifest_key = build_manifest_key(persist_prefix, run_date, csv_name)
-            write_json_to_s3(
-                s3_client,
-                results_bucket,
-                manifest_key,
-                {"csv_name": csv_name, "records": records},
-            )
+                urls = [place.get("enrichment_url") for place in places if place.get("enrichment_url")]
+                enrichment_directory = build_enrichment_directory(run_date, csv_name, search_id)
+                enrichment_key = build_query_key(
+                    persist_prefix,
+                    run_date,
+                    csv_name,
+                    search_id,
+                    "enrichment_request",
+                )
 
-            urls = []
-            for record in records:
-                for place in record.get("results", []):
-                    url = place.get("enrichment_url")
-                    if url:
-                        urls.append(url)
+                if urls:
+                    enrichment_payload = build_enrichment_request(urls, enrichment_directory)
+                    enrichment_response = trigger_enrichment(enrichment_payload)
+                else:
+                    enrichment_payload = {"input": [], "deliver": {"directory": enrichment_directory}}
+                    enrichment_response = {"skipped": True}
+                    log_event(logging.WARNING, "enrichment_skipped_empty_urls", id=search_id)
 
-            enrichment_directory = build_enrichment_directory(run_date, csv_name)
-            enrichment_payload = build_enrichment_request(urls, enrichment_directory)
-            enrichment_response = trigger_enrichment(enrichment_payload)
-            enrichment_key = build_query_key(
-                persist_prefix,
-                run_date,
-                csv_name,
-                "manifest",
-                "enrichment_request",
-            )
-            write_json_to_s3(
-                s3_client,
-                results_bucket,
-                enrichment_key,
-                {
-                    "csv_name": csv_name,
-                    "manifest_key": manifest_key,
-                    "enrichment_directory": enrichment_directory,
-                    "payload": enrichment_payload,
-                    "response": enrichment_response,
-                },
-            )
-            log_event(
-                logging.INFO,
-                "enrichment_request_built",
-                csv_name=csv_name,
-                queries=len(records),
-                inputs=len(enrichment_payload.get("input", [])),
-            )
+                write_json_to_s3(
+                    s3_client,
+                    results_bucket,
+                    enrichment_key,
+                    {
+                        "csv_name": csv_name,
+                        "serp_key": serp_key,
+                        "enrichment_directory": enrichment_directory,
+                        "payload": enrichment_payload,
+                        "response": enrichment_response,
+                    },
+                )
+                log_event(
+                    logging.INFO,
+                    "enrichment_request_built",
+                    csv_name=csv_name,
+                    query_id=search_id,
+                    inputs=len(enrichment_payload.get("input", [])),
+                )
 
-            results.append({"csv_name": csv_name, "processed": len(csv_messages)})
+                results.append({"csv_name": csv_name, "query_id": search_id})
 
         log_event(logging.INFO, "lambda_complete", processed=len(results))
         return {"processed": results}

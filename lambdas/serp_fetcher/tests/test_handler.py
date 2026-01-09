@@ -93,7 +93,7 @@ class FakeS3Client:
     def __init__(self):
         self.store = {}
 
-    def put_object(self, Bucket, Key, Body):
+    def put_object(self, Bucket, Key, Body, **kwargs):
         self.store[Key] = Body
         return {}
 
@@ -182,6 +182,7 @@ def test_lambda_handler_offline(monkeypatch):
     }
 
     result = handler.lambda_handler(event, None)
-    assert result["processed"][0]["processed"] == 1
-    assert any("serp_manifest_" in key for key in s3_client.store)
-    assert any("query=manifest_enrichment_request_" in key for key in s3_client.store)
+    assert result["processed"][0]["query_id"] == "dry-1"
+    assert any("/batch_" in key for key in s3_client.store)
+    assert any("/serp/query=" in key for key in s3_client.store)
+    assert any("_enrichment_request.json" in key for key in s3_client.store)

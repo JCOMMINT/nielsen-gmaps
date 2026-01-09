@@ -11,8 +11,8 @@ This workspace contains Lambda modules for a Google Maps SERP + Bright Data enri
 ## Lambda modules
 
 - `lambdas/s3_ingest_to_sqs`: S3 CSV ingest -> SQS.
-- `lambdas/serp_fetcher`: SQS -> Google Maps SERP parsing -> S3 manifest + Bright Data trigger.
-- `lambdas/enrich_to_s3`: Bright Data delivery handler -> merge with SERP manifest -> final CSV-level JSON in S3.
+- `lambdas/serp_fetcher`: SQS -> Google Maps SERP parsing -> S3 per-query SERP files + Bright Data trigger.
+- `lambdas/enrich_to_s3`: Bright Data delivery handler -> merge per-query SERP/enrichment -> final CSV-level JSON in S3.
 
 Each Lambda is packaged as a container image (dependencies bundled in the image).
 
@@ -49,7 +49,7 @@ The ingest Lambda expects a CSV with columns:
 - `BRIGHTDATA_S3_BUCKET` (required for Bright Data S3 delivery)
 - `BRIGHTDATA_ROLE_ARN` (required for Bright Data S3 delivery)
 - `BRIGHTDATA_EXTERNAL_ID` (required for Bright Data S3 delivery)
-- Bright Data S3 directory is fixed: `wsapi/<dataset_id>/<timestamp>/csv_name=<csv>`
+- Bright Data S3 directory is fixed: `wsapi/<dataset_id>/<timestamp>/csv_name=<csv>/query=<id>`
 - `BRIGHTDATA_TRIGGER_TIMEOUT` (optional)
 
 `enrich_to_s3`:
@@ -70,6 +70,20 @@ The notification event must include:
 - `enrichment_bucket`, `enrichment_key`
   - Or be an S3 event (object-created) from the Bright Data output bucket.
   - `serp_bucket`, `serp_key` are optional if `RESULTS_BUCKET` is set.
+
+## Persistence layout
+
+For each CSV batch, `serp_fetcher` writes:
+
+- `persistence/date=YYYY-MM-DD/csv_name=<csv>/batch_<csv>.json`
+- `persistence/date=YYYY-MM-DD/csv_name=<csv>/serp/query=<id>.json`
+- `persistence/date=YYYY-MM-DD/csv_name=<csv>/query=<id>_enrichment_request.json`
+
+`enrich_to_s3` writes:
+
+- `persistence/date=YYYY-MM-DD/csv_name=<csv>/enriched/query=<id>.json`
+- `persistence/date=YYYY-MM-DD/csv_name=<csv>/status_<csv>.json`
+- `persistence/date=YYYY-MM-DD/csv_name=<csv>/merged_partial_<csv>.json`
 ## Local testing
 
 From `GMaps/`:
