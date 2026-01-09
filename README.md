@@ -11,8 +11,8 @@ This workspace contains Lambda modules for a Google Maps SERP + Bright Data enri
 ## Lambda modules
 
 - `lambdas/s3_ingest_to_sqs`: S3 CSV ingest -> SQS.
-- `lambdas/serp_fetcher`: SQS -> Google Maps SERP parsing -> S3 (per-query JSON + enrichment request).
-- `lambdas/enrich_to_s3`: Bright Data notification handler -> merge with SERP JSON -> final JSON in S3.
+- `lambdas/serp_fetcher`: SQS -> Google Maps SERP parsing -> S3 manifest + Bright Data trigger.
+- `lambdas/enrich_to_s3`: Bright Data delivery handler -> merge with SERP manifest -> final CSV-level JSON in S3.
 
 Each Lambda is packaged as a container image (dependencies bundled in the image).
 
@@ -43,24 +43,33 @@ The ingest Lambda expects a CSV with columns:
 - `REQUEST_TIMEOUT` (optional)
 - `VERIFY_TLS` (optional, `true`/`false`)
 - `USER_AGENT` (optional)
-- `BRIGHTDATA_USERNAME`, `BRIGHTDATA_PASSWORD`, `BRIGHTDATA_PORT`, `BRIGHTDATA_HOST` (optional proxy)
+    - `BRIGHTDATA_USERNAME`, `BRIGHTDATA_PASSWORD`, `BRIGHTDATA_PORT`, `BRIGHTDATA_HOST` (optional proxy)
 - `BRIGHTDATA_DATASET_ID` (required for enrichment trigger)
 - `BRIGHTDATA_TOKEN` (required for enrichment trigger)
 - `BRIGHTDATA_S3_BUCKET` (required for Bright Data S3 delivery)
 - `BRIGHTDATA_ROLE_ARN` (required for Bright Data S3 delivery)
 - `BRIGHTDATA_EXTERNAL_ID` (required for Bright Data S3 delivery)
-- Bright Data S3 directory is fixed: `bd-results/date=YYYY-MM-DD/csv_name=<csv>`
+- Bright Data S3 directory is fixed: `wsapi/<dataset_id>/<timestamp>/csv_name=<csv>`
 - `BRIGHTDATA_TRIGGER_TIMEOUT` (optional)
 
 `enrich_to_s3`:
 
+- `RESULTS_BUCKET` (required for persistence reads/writes)
+- `FINAL_BUCKET` (optional, default `nielsen-input`)
 - `FINAL_PREFIX` (optional, default `final`)
+- `PERSIST_PREFIX` (optional, default `persistence`)
+- `MAX_RETRIES` (optional, default 3)
+- `BATCH_TIMEOUT_HOURS` (optional, default 24)
+- `BRIGHTDATA_DATASET_ID`, `BRIGHTDATA_TOKEN`, `BRIGHTDATA_ROLE_ARN`, `BRIGHTDATA_EXTERNAL_ID` (required for retry triggers)
+- `SMTP_SERVER`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD` (required for email notifications)
+- `NOTIFY_EMAIL` (optional, default `accounts2@mint-data.co`)
+- `ENABLE_EMAIL` (optional, set `true` to send notifications)
 
 The notification event must include:
 
 - `enrichment_bucket`, `enrichment_key`
-- `serp_bucket`, `serp_key`
-- `final_bucket` (optional if it matches the enrichment bucket)
+  - Or be an S3 event (object-created) from the Bright Data output bucket.
+  - `serp_bucket`, `serp_key` are optional if `RESULTS_BUCKET` is set.
 ## Local testing
 
 From `GMaps/`:

@@ -1,10 +1,10 @@
 from lambdas.enrich_to_s3.src import handler
 
 
-def test_build_final_key_contains_query():
-    key = handler.build_final_key("final", "sample.csv", "q-1")
+def test_build_final_key_contains_csv_name():
+    key = handler.build_final_key("final", "sample.csv")
 
-    assert key == "final/sample/query=q-1_enriched.json"
+    assert key == "final/sample.csv_enriched_results.json"
 
 
 def test_merge_place_prefers_enrichment():
