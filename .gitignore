@@ -23,3 +23,7 @@ Thumbs.db
 
 # Project
 INFO/
+# Documentation (except README)
+DEPLOYMENT_GUIDE.md
+QUICK_REFERENCE.md
+REFACTORING_SUMMARY.md
