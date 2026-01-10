@@ -23,7 +23,15 @@ Thumbs.db
 
 # Project
 INFO/
+
+# Data files
+*.csv
+*.csv_enriched_results.json
+
 # Documentation (except README)
 DEPLOYMENT_GUIDE.md
 QUICK_REFERENCE.md
 REFACTORING_SUMMARY.md
+
+# Old/backup code
+handler_old.py
